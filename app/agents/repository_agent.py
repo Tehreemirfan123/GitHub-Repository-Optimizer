@@ -542,6 +542,7 @@ settings = get_settings()
 
 repository_agent = Agent(
     name="repository_analysis_agent",
+    mode="single_turn",
     model=settings.gemini_model,
     description=(
         "Fetches a public GitHub repository and produces evidence-based "

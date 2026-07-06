@@ -1,7 +1,7 @@
 """Documentation Analysis Agent.
 
 Responsibilities:
-- Reuse the Phase 2 GitHub repository retrieval tool.
+- Reuse the GitHub repository retrieval tool.
 - Assess README, LICENSE, CONTRIBUTING, and SECURITY coverage.
 - Produce structured documentation findings and recommendations.
 
@@ -461,6 +461,7 @@ settings = get_settings()
 
 documentation_agent = Agent(
     name="documentation_analysis_agent",
+    mode="single_turn",
     model=settings.gemini_model,
     description=(
         "Analyzes baseline public repository documentation coverage and "
