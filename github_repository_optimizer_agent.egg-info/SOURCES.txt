@@ -1,0 +1,11 @@
+pyproject.toml
+app/__init__.py
+app/agent.py
+app/main.py
+app/config/__init__.py
+app/config/settings.py
+github_repository_optimizer_agent.egg-info/PKG-INFO
+github_repository_optimizer_agent.egg-info/SOURCES.txt
+github_repository_optimizer_agent.egg-info/dependency_links.txt
+github_repository_optimizer_agent.egg-info/requires.txt
+github_repository_optimizer_agent.egg-info/top_level.txt
