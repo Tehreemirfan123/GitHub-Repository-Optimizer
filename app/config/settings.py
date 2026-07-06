@@ -11,6 +11,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     """Loads project settings from app/.env."""
 
+    github_token: SecretStr | None = Field(
+        default=None,
+        description="Optional read-only GitHub token for higher API limits.",
+    )
+
     model_config = SettingsConfigDict(
         env_file="app/.env",
         env_file_encoding="utf-8",

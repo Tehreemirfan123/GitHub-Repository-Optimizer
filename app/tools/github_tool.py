@@ -8,13 +8,12 @@ Responsibilities:
 
 This module does not analyze repository quality. Analysis begins in later phases.
 """
-
 from __future__ import annotations
+from app.config.settings import get_settings
 
 import base64
 import binascii
 import logging
-import os
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
@@ -261,9 +260,14 @@ class GitHubRepositoryClient:
             "User-Agent": "github-repository-optimizer-agent",
         }
 
-        github_token = os.getenv("GITHUB_TOKEN", "").strip()
-        if github_token:
-            headers["Authorization"] = f"Bearer {github_token}"
+        settings = get_settings()
+        github_token = getattr(settings, "github_token", None)
+
+        if github_token is not None:
+            token_value = github_token.get_secret_value().strip()
+
+            if token_value:
+                headers["Authorization"] = f"Bearer {token_value}"
 
         return headers
 
