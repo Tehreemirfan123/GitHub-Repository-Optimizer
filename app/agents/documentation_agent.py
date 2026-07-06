@@ -64,7 +64,7 @@ class DocumentationRecommendation(BaseModel):
 
 
 class DocumentationAnalysisResult(BaseModel):
-    """Validated Phase 4 documentation analysis result."""
+    """Validated documentation analysis result."""
 
     success: bool = True
     repository_url: str
@@ -311,7 +311,7 @@ def analyze_repository_documentation(repository_url: str) -> dict[str, Any]:
         Structured assessment of README, LICENSE, CONTRIBUTING, and SECURITY.
 
     Important:
-        This Phase 4 tool does not perform source-code analysis, vulnerability
+        This tool does not perform source-code analysis, vulnerability
         scanning, scoring, or repository modification.
     """
     try:

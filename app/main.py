@@ -7,7 +7,7 @@ def main() -> None:
     """Verify that settings load successfully without exposing the API key."""
     settings = get_settings()
 
-    print("Phase 1 configuration loaded successfully.")
+    print("Configuration loaded successfully.")
     print(f"Application name: {settings.app_name}")
     print(f"Gemini model: {settings.gemini_model}")
     print("Gemini API key loaded: True")

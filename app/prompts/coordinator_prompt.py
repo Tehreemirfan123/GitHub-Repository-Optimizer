@@ -1,4 +1,4 @@
-"""Prompt for the Phase 5 Coordinator Agent."""
+"""Prompt for Coordinator Agent."""
 
 COORDINATOR_AGENT_INSTRUCTION = """
 You are the Coordinator Agent for the GitHub Repository Optimizer.

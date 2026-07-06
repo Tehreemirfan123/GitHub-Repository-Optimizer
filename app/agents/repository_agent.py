@@ -114,6 +114,7 @@ class RepositoryAnalysisResult(BaseModel):
 def _normalized_paths(file_tree: list[dict[str, Any]]) -> set[str]:
     """Return normalized lowercase file paths from GitHub tree entries."""
     return {
+        # pyrefly: ignore [unnecessary-type-conversion]
         str(entry["path"]).lower()
         for entry in file_tree
         if isinstance(entry, dict) and isinstance(entry.get("path"), str)
@@ -462,7 +463,7 @@ def analyze_public_repository(repository_url: str) -> dict[str, Any]:
         framework signals, structure findings, missing artifacts, and limits.
 
     Important:
-        This Phase 3 tool does not perform security analysis, documentation
+        This tool does not perform security analysis, documentation
         review, scoring, or repository modification.
     """
     try:

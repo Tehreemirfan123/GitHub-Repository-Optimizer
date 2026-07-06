@@ -1,4 +1,4 @@
-"""Settings for the Phase 1 Google ADK application."""
+"""Settings for Google ADK application."""
 
 from __future__ import annotations
 

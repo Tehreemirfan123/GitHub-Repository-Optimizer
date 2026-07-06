@@ -6,7 +6,7 @@ Responsibilities:
 - Fetch README content when available.
 - Fetch a bounded recursive file tree.
 
-Phase 6 guardrails:
+Guardrails:
 - Reject invalid or unsupported repository URLs.
 - Reject private repositories when GitHub identifies them.
 - Mask basic secrets before repository content reaches AI agents.
