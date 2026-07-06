@@ -6,20 +6,31 @@ Responsibilities:
 - Fetch README content when available.
 - Fetch a bounded recursive file tree.
 
-This module does not analyze repository quality. Analysis begins in later phases.
+Phase 6 guardrails:
+- Reject invalid or unsupported repository URLs.
+- Reject private repositories when GitHub identifies them.
+- Mask basic secrets before repository content reaches AI agents.
+
+This module does not analyze repository quality.
 """
+
 from __future__ import annotations
-from app.config.settings import get_settings
 
 import base64
 import binascii
 import logging
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 from pydantic import BaseModel, Field, HttpUrl
+
+from app.config.settings import get_settings
+from app.guardrails.input_policy import (
+    InputPolicyError,
+    validate_public_github_repository_url,
+)
+from app.guardrails.secret_redaction import SecretRedactor
 
 
 LOGGER = logging.getLogger(__name__)
@@ -29,6 +40,8 @@ GITHUB_API_VERSION = "2026-03-10"
 REQUEST_TIMEOUT_SECONDS = 15.0
 MAX_README_CHARACTERS = 50_000
 MAX_TREE_ENTRIES = 1_000
+
+SECRET_REDACTOR = SecretRedactor()
 
 
 class GitHubToolError(RuntimeError):
@@ -41,6 +54,10 @@ class InvalidGitHubUrlError(GitHubToolError):
 
 class RepositoryNotFoundError(GitHubToolError):
     """Raised when a public repository cannot be found."""
+
+
+class PrivateRepositoryBlockedError(GitHubToolError):
+    """Raised when GitHub identifies a repository as private."""
 
 
 class GitHubRateLimitError(GitHubToolError):
@@ -80,6 +97,7 @@ class ReadmeData(BaseModel):
     path: str | None = None
     content: str | None = None
     truncated: bool = False
+    secrets_redacted: int = Field(default=0, ge=0)
 
 
 class FileTreeEntry(BaseModel):
@@ -91,7 +109,7 @@ class FileTreeEntry(BaseModel):
 
 
 class RepositoryData(BaseModel):
-    """Complete Phase 2 repository retrieval result."""
+    """Complete repository retrieval result."""
 
     success: bool = True
     repository: RepositoryReference
@@ -113,64 +131,18 @@ class GitHubClientConfig:
 
 
 def parse_github_repository_url(repository_url: str) -> RepositoryReference:
-    """Validate and normalize a GitHub repository URL.
-
-    Accepted examples:
-    - https://github.com/owner/repository
-    - https://github.com/owner/repository/
-    - https://github.com/owner/repository.git
-
-    Args:
-        repository_url: Public GitHub repository URL.
-
-    Returns:
-        Validated repository reference.
-
-    Raises:
-        InvalidGitHubUrlError: If the URL is unsupported or malformed.
-    """
-    raw_url = repository_url.strip()
-
-    if not raw_url:
-        raise InvalidGitHubUrlError("GitHub repository URL cannot be empty.")
-
-    parsed = urlparse(raw_url)
-
-    if parsed.scheme != "https":
-        raise InvalidGitHubUrlError(
-            "Use an HTTPS GitHub URL, for example: "
-            "https://github.com/owner/repository"
+    """Validate and normalize a public GitHub repository URL."""
+    try:
+        validated_reference = validate_public_github_repository_url(
+            repository_url
         )
-
-    if parsed.hostname not in {"github.com", "www.github.com"}:
-        raise InvalidGitHubUrlError(
-            "Only github.com repository URLs are supported."
-        )
-
-    if parsed.username or parsed.password or parsed.port:
-        raise InvalidGitHubUrlError(
-            "Repository URLs must not contain credentials or custom ports."
-        )
-
-    parts = [part for part in parsed.path.strip("/").split("/") if part]
-
-    if len(parts) != 2:
-        raise InvalidGitHubUrlError(
-            "Repository URL must follow: https://github.com/owner/repository"
-        )
-
-    owner, repository = parts
-    repository = repository.removesuffix(".git")
-
-    if not owner or not repository:
-        raise InvalidGitHubUrlError(
-            "Repository owner and repository name are required."
-        )
+    except InputPolicyError as error:
+        raise InvalidGitHubUrlError(str(error)) from error
 
     return RepositoryReference(
-        owner=owner,
-        repository=repository,
-        url=f"https://github.com/{owner}/{repository}",
+        owner=validated_reference.owner,
+        repository=validated_reference.repository,
+        url=validated_reference.normalized_url,
     )
 
 
@@ -196,14 +168,7 @@ class GitHubRepositoryClient:
             self._client.close()
 
     def fetch_repository(self, repository_url: str) -> RepositoryData:
-        """Fetch public repository metadata, README, and file tree.
-
-        Args:
-            repository_url: Public GitHub repository URL.
-
-        Returns:
-            Structured repository data with no analysis or recommendations.
-        """
+        """Fetch public repository metadata, README, and file tree."""
         reference = parse_github_repository_url(repository_url)
 
         LOGGER.info(
@@ -219,12 +184,13 @@ class GitHubRepositoryClient:
         )
 
         if bool(metadata_payload.get("private")):
-            raise GitHubApiError(
-                "Private repositories are not supported in this phase."
+            raise PrivateRepositoryBlockedError(
+                "Private repositories are not supported by this application."
             )
 
         metadata = self._build_metadata(metadata_payload)
         readme, readme_limitations = self._fetch_readme(reference)
+
         file_tree, tree_truncated, tree_limitations = self._fetch_file_tree(
             reference=reference,
             default_branch=metadata.default_branch,
@@ -236,7 +202,10 @@ class GitHubRepositoryClient:
             readme=readme,
             file_tree=file_tree,
             file_tree_truncated=tree_truncated,
-            limitations=[*readme_limitations, *tree_limitations],
+            limitations=[
+                *readme_limitations,
+                *tree_limitations,
+            ],
         )
 
         LOGGER.info(
@@ -245,6 +214,7 @@ class GitHubRepositoryClient:
                 "owner": reference.owner,
                 "repository": reference.repository,
                 "readme_available": readme.available,
+                "readme_secrets_redacted": readme.secrets_redacted,
                 "tree_entries": len(file_tree),
                 "tree_truncated": tree_truncated,
             },
@@ -253,14 +223,15 @@ class GitHubRepositoryClient:
         return result
 
     def _build_headers(self) -> dict[str, str]:
-        """Build GitHub REST API headers without exposing tokens in logs."""
+        """Build GitHub REST API headers without logging credentials."""
+        settings = get_settings()
+
         headers = {
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": GITHUB_API_VERSION,
             "User-Agent": "github-repository-optimizer-agent",
         }
 
-        settings = get_settings()
         github_token = getattr(settings, "github_token", None)
 
         if github_token is not None:
@@ -308,9 +279,9 @@ class GitHubRepositoryClient:
         if response.is_success:
             return
 
-        remaining = response.headers.get("X-RateLimit-Remaining")
+        remaining_requests = response.headers.get("X-RateLimit-Remaining")
 
-        if response.status_code == 403 and remaining == "0":
+        if response.status_code == 403 and remaining_requests == "0":
             raise GitHubRateLimitError(
                 "GitHub API rate limit reached. Add GITHUB_TOKEN to app/.env "
                 "or try again later."
@@ -335,9 +306,12 @@ class GitHubRepositoryClient:
         owner_payload = payload.get("owner")
 
         if not isinstance(owner_payload, dict):
-            raise GitHubApiError("GitHub response did not include an owner.")
+            raise GitHubApiError(
+                "GitHub response did not include repository owner information."
+            )
 
         topics = payload.get("topics", [])
+
         if not isinstance(topics, list):
             topics = []
 
@@ -362,7 +336,7 @@ class GitHubRepositoryClient:
         self,
         reference: RepositoryReference,
     ) -> tuple[ReadmeData, list[str]]:
-        """Fetch README content. Missing README is not a fatal error."""
+        """Fetch and redact README content safely."""
         endpoint = f"/repos/{reference.owner}/{reference.repository}/readme"
 
         try:
@@ -383,11 +357,14 @@ class GitHubRepositoryClient:
                     path=payload.get("path"),
                     content=None,
                 ),
-                ["README metadata was available, but content could not be decoded."],
+                [
+                    "README metadata was available, but content could not be "
+                    "decoded."
+                ],
             )
 
         try:
-            decoded = base64.b64decode(
+            decoded_content = base64.b64decode(
                 encoded_content.encode("utf-8"),
                 validate=False,
             ).decode("utf-8", errors="replace")
@@ -396,22 +373,38 @@ class GitHubRepositoryClient:
                 "README content could not be decoded safely."
             ) from error
 
-        truncated = len(decoded) > self._config.max_readme_characters
+        redacted_content, redaction_count = SECRET_REDACTOR.redact_text(
+            decoded_content
+        )
+
+        truncated = (
+            len(redacted_content) > self._config.max_readme_characters
+        )
+
         if truncated:
-            decoded = decoded[: self._config.max_readme_characters]
+            redacted_content = redacted_content[
+                : self._config.max_readme_characters
+            ]
 
         limitations: list[str] = []
+
         if truncated:
             limitations.append(
                 "README was truncated to the configured safety limit."
+            )
+
+        if redaction_count:
+            limitations.append(
+                "Potential secrets detected in README content were masked."
             )
 
         return (
             ReadmeData(
                 available=True,
                 path=payload.get("path"),
-                content=decoded,
+                content=redacted_content,
                 truncated=truncated,
+                secrets_redacted=redaction_count,
             ),
             limitations,
         )
@@ -448,6 +441,7 @@ class GitHubRepositoryClient:
                 continue
 
             size = item.get("size")
+
             entries.append(
                 FileTreeEntry(
                     path=path,
@@ -461,10 +455,12 @@ class GitHubRepositoryClient:
         tree_truncated = github_truncated or local_truncated
 
         limitations: list[str] = []
+
         if github_truncated:
             limitations.append(
                 "GitHub reported that the recursive file tree was truncated."
             )
+
         if local_truncated:
             limitations.append(
                 "File tree was limited to the configured maximum entry count."
@@ -474,52 +470,55 @@ class GitHubRepositoryClient:
 
 
 def fetch_github_repository(repository_url: str) -> dict[str, Any]:
-    """Fetch public GitHub repository data without analyzing it.
-
-    Args:
-        repository_url: A public HTTPS GitHub repository URL in this format:
-            https://github.com/owner/repository
-
-    Returns:
-        A structured dictionary containing repository metadata, README content,
-        file-tree entries, and safe limitations. Future ADK agents can register
-        this typed function directly as a function tool.
-
-    Examples:
-        fetch_github_repository("https://github.com/google/adk-python")
-    """
+    """Fetch safe public GitHub repository data without analyzing it."""
     client = GitHubRepositoryClient()
 
     try:
         result = client.fetch_repository(repository_url)
-        return result.model_dump(mode="json")
+
+        return SECRET_REDACTOR.redact_data(
+            result.model_dump(mode="json")
+        )
+
     except InvalidGitHubUrlError as error:
         return {
             "success": False,
             "error_code": "invalid_github_url",
             "message": str(error),
         }
+
+    except PrivateRepositoryBlockedError as error:
+        return {
+            "success": False,
+            "error_code": "private_repository_not_supported",
+            "message": str(error),
+        }
+
     except RepositoryNotFoundError as error:
         return {
             "success": False,
             "error_code": "repository_not_found",
             "message": str(error),
         }
+
     except GitHubRateLimitError as error:
         return {
             "success": False,
             "error_code": "github_rate_limit",
             "message": str(error),
         }
+
     except GitHubToolError as error:
         LOGGER.exception(
             "github_repository_fetch_failed",
             extra={"error_type": type(error).__name__},
         )
+
         return {
             "success": False,
             "error_code": "github_api_error",
             "message": str(error),
         }
+
     finally:
         client.close()
