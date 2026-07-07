@@ -1,5 +1,9 @@
 # GitHub Repository Optimizer Agent
 
+![Google ADK](https://img.shields.io/badge/Google-ADK-4285F4?style=for-the-badge&logo=google&logoColor=white)
+
+![Gemini](https://img.shields.io/badge/Gemini-2.5-8E75FF?style=for-the-badge)
+
 An AI-powered multi-agent application that fetches and analyzes public GitHub repositories.
 
 The project helps developers understand a repository’s structure, technologies, documentation coverage, and missing baseline project files.
