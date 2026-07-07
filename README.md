@@ -4,6 +4,8 @@
 
 ![Gemini](https://img.shields.io/badge/Gemini-2.5-8E75FF?style=for-the-badge)
 
+[![Streamlit Cloud Deploy Link](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://your-app-name.streamlit.app/)
+
 An AI-powered multi-agent application that fetches and analyzes public GitHub repositories.
 
 The project helps developers understand a repository’s structure, technologies, documentation coverage, and missing baseline project files.
