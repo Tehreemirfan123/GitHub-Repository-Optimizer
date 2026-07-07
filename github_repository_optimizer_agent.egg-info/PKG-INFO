@@ -1,8 +1,0 @@
-Metadata-Version: 2.4
-Name: github-repository-optimizer-agent
-Version: 0.1.0
-Summary: GitHub Repository Optimizer Agent
-Requires-Python: >=3.11
-Requires-Dist: google-adk<3.0.0,>=2.3.0
-Requires-Dist: pydantic-settings<3.0.0,>=2.14.0
-Requires-Dist: python-dotenv<2.0.0,>=1.2.0
