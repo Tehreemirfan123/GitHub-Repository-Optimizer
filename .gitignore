@@ -23,6 +23,7 @@ htmlcov/
 # IDE files
 .vscode/
 .idea/
+github_repository_optimizer_agent.egg-info/
 
 # Operating system files
 .DS_Store
