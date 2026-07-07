@@ -1,10 +1,10 @@
 # GitHub Repository Optimizer Agent
 
+[![Streamlit](https://img.shields.io/badge/Streamlit-Live_App-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://app-repository-optimizer.streamlit.app/)
+
 ![Google ADK](https://img.shields.io/badge/Google-ADK-4285F4?style=for-the-badge&logo=google&logoColor=white)
 
 ![Gemini](https://img.shields.io/badge/Gemini-2.5-8E75FF?style=for-the-badge)
-
-[![Streamlit Cloud Deploy Link](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://your-app-name.streamlit.app/)
 
 An AI-powered multi-agent application that fetches and analyzes public GitHub repositories.
 
