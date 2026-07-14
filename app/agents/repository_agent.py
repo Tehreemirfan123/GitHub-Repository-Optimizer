@@ -451,37 +451,19 @@ def _build_structure_findings(
     return findings
 
 def analyze_repository_context(
-    repository_data: dict[str, Any],
+    repository_data: RepositoryData,
 ) -> dict[str, Any]:
-    """Structurally analyze already-fetched repository context.
-
-    This is the canonical repository-structure analysis function used by the
-    unified application service. It must not retrieve repository data from
-    GitHub.
-
-    Args:
-        repository_data: Validated and sanitized repository data returned by
-            the shared repository context service.
-
-    Returns:
-        A validated structured repository analysis containing project type,
-        language, technology signals, structure findings, missing artifacts,
-        and analysis limitations.
-
-    Important:
-        This function does not call GitHub, perform security analysis,
-        review documentation quality, calculate scores, execute repository
-        code, or modify the repository.
-    """
+    """Structurally analyze already-fetched repository context."""
     try:
-        if not repository_data.get("success", False):
-            return repository_data
+        repository_payload = repository_data.model_dump(mode="json")
 
-        metadata = repository_data["metadata"]
-        repository = repository_data["repository"]
-        readme = repository_data["readme"]
-        file_tree = repository_data.get("file_tree", [])
-        limitations = list(repository_data.get("limitations", []))
+        metadata = repository_payload["metadata"]
+        repository = repository_payload["repository"]
+        readme = repository_payload["readme"]
+        file_tree = repository_payload.get("file_tree", [])
+        limitations = list(
+            repository_payload.get("limitations", [])
+        )
 
         paths = _normalized_paths(file_tree)
         readme_content = readme.get("content")
@@ -497,17 +479,6 @@ def analyze_repository_context(
             readme_content=readme_content,
         )
 
-        structure_findings = _build_structure_findings(
-            paths=paths,
-            project_type=project_type,
-            project_type_evidence=project_type_evidence,
-        )
-
-        missing_artifacts = _find_missing_artifacts(
-            paths=paths,
-            project_type=project_type,
-        )
-
         result = RepositoryAnalysisResult(
             repository_url=str(repository["url"]),
             repository_name=str(metadata["name"]),
@@ -515,8 +486,15 @@ def analyze_repository_context(
             project_type=project_type,
             primary_language=metadata.get("language"),
             detected_technologies=technologies,
-            structure_findings=structure_findings,
-            missing_artifacts=missing_artifacts,
+            structure_findings=_build_structure_findings(
+                paths=paths,
+                project_type=project_type,
+                project_type_evidence=project_type_evidence,
+            ),
+            missing_artifacts=_find_missing_artifacts(
+                paths=paths,
+                project_type=project_type,
+            ),
             file_count_inspected=len(file_tree),
             limitations=[
                 *limitations,
@@ -543,23 +521,6 @@ def analyze_repository_context(
 
         return result.model_dump(mode="json")
 
-    except KeyError as error:
-        LOGGER.exception(
-            "repository_context_invalid",
-            extra={
-                "missing_field": str(error),
-                "error_type": type(error).__name__,
-            },
-        )
-
-        return {
-            "success": False,
-            "error_code": "invalid_repository_context",
-            "message": (
-                "Repository analysis received incomplete repository data."
-            ),
-        }
-
     except Exception as error:
         LOGGER.exception(
             "repository_analysis_failed",
@@ -576,24 +537,16 @@ def analyze_repository_context(
 def analyze_public_repository(
     repository_url: str,
 ) -> dict[str, Any]:
-    """Fetch and structurally analyze a public GitHub repository.
-
-    This function is retained as a backward-compatible URL-based wrapper.
-    New application workflows should retrieve repository context once through
-    RepositoryContextService and call analyze_repository_context().
-
-    Args:
-        repository_url: Public HTTPS GitHub URL in the form:
-            https://github.com/owner/repository
-
-    Returns:
-        A validated structured repository analysis.
-    """
+    """Fetch and structurally analyze a public GitHub repository."""
     try:
-        repository_data = fetch_github_repository(repository_url)
+        repository_payload = fetch_github_repository(repository_url)
 
-        if not repository_data.get("success", False):
-            return repository_data
+        if not repository_payload.get("success", False):
+            return repository_payload
+
+        repository_data = RepositoryData.model_validate(
+            repository_payload
+        )
 
         return analyze_repository_context(repository_data)
 

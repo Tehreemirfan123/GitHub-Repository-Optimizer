@@ -298,39 +298,27 @@ def _assess_standard_file(
             )
         ],
     )
-
 def analyze_documentation_context(
-    repository_data: dict[str, Any],
+    repository_data: RepositoryData,
 ) -> dict[str, Any]:
-    """Analyze documentation using already-fetched repository data.
-
-    This is the canonical documentation-analysis function used by the unified
-    application service. It must not retrieve repository data from GitHub.
-
-    Args:
-        repository_data: Validated and sanitized repository context returned
-            by RepositoryContextService.
-
-    Returns:
-        Structured assessment of README, LICENSE, CONTRIBUTING, and SECURITY.
-
-    Important:
-        This function does not perform source-code analysis, vulnerability
-        scanning, scoring, repository retrieval, or repository modification.
-    """
+    
+    """Analyze documentation using already-fetched repository context."""
     try:
-        if not repository_data.get("success", False):
-            return repository_data
+        repository_payload = repository_data.model_dump(mode="json")
 
-        metadata = repository_data["metadata"]
-        repository = repository_data["repository"]
-        readme = repository_data["readme"]
-        file_tree = repository_data.get("file_tree", [])
-        limitations = list(repository_data.get("limitations", []))
+        metadata = repository_payload["metadata"]
+        repository = repository_payload["repository"]
+        readme = repository_payload["readme"]
+        file_tree = repository_payload.get("file_tree", [])
+        limitations = list(
+            repository_payload.get("limitations", [])
+        )
 
         path_map = _normalized_path_map(file_tree)
 
-        readme_assessment, readme_recommendations = _assess_readme(readme)
+        readme_assessment, readme_recommendations = _assess_readme(
+            readme
+        )
 
         license_path = _find_root_file(
             path_map,
@@ -485,24 +473,16 @@ def analyze_documentation_context(
 def analyze_repository_documentation(
     repository_url: str,
 ) -> dict[str, Any]:
-    """Fetch repository data and analyze its documentation.
-
-    This function remains for backward compatibility. The unified application
-    service should use analyze_documentation_context() with shared repository
-    data instead.
-
-    Args:
-        repository_url: Public HTTPS GitHub URL in the form:
-            https://github.com/owner/repository
-
-    Returns:
-        Structured documentation analysis result.
-    """
+    """Fetch repository data and analyze its documentation."""
     try:
-        repository_data = fetch_github_repository(repository_url)
+        repository_payload = fetch_github_repository(repository_url)
 
-        if not repository_data.get("success", False):
-            return repository_data
+        if not repository_payload.get("success", False):
+            return repository_payload
+
+        repository_data = RepositoryData.model_validate(
+            repository_payload
+        )
 
         return analyze_documentation_context(repository_data)
 
