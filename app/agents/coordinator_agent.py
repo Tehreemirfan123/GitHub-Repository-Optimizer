@@ -1,9 +1,4 @@
-"""Coordinator Agent.
-
-The Coordinator becomes the root orchestration agent. It delegates repository
-structure analysis and documentation analysis to specialist sub-agents, then
-merges their returned findings into one final report.
-"""
+"""Coordinator Agent using the canonical repository-analysis service."""
 
 from __future__ import annotations
 
@@ -11,11 +6,9 @@ import logging
 
 from google.adk import Agent
 
-from app.agents.documentation_agent import documentation_agent
-from app.agents.repository_agent import repository_agent
 from app.config.settings import get_settings
 from app.prompts.coordinator_prompt import COORDINATOR_AGENT_INSTRUCTION
-
+from app.tools.unified_analysis_tool import analyze_repository
 
 LOGGER = logging.getLogger(__name__)
 
@@ -26,24 +19,18 @@ try:
         name="github_repository_optimizer_coordinator",
         model=settings.gemini_model,
         description=(
-            "Coordinates repository structure and documentation analysis "
-            "for public GitHub repositories."
+            "Coordinates evidence-based analysis of public GitHub "
+            "repositories through the canonical application service."
         ),
         instruction=COORDINATOR_AGENT_INSTRUCTION,
-        sub_agents=[
-            repository_agent,
-            documentation_agent,
-        ],
+        tools=[analyze_repository],
     )
 
     LOGGER.info(
         "coordinator_agent_initialized",
         extra={
             "agent_name": coordinator_agent.name,
-            "sub_agents": [
-                repository_agent.name,
-                documentation_agent.name,
-            ],
+            "tool_names": ["analyze_repository"],
         },
     )
 
@@ -55,5 +42,5 @@ except Exception as error:
 
     raise RuntimeError(
         "Coordinator Agent could not be initialized. "
-        "Check specialist-agent imports and ADK configuration."
+        "Check ADK configuration and unified analysis tool imports."
     ) from error
