@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from app.config.settings import get_settings
 from app.prompts.documentation_prompt import DOCUMENTATION_AGENT_INSTRUCTION
-from app.tools.github_tool import fetch_github_repository
+from app.tools.github_tool import RepositoryData, fetch_github_repository
 
 
 LOGGER = logging.getLogger(__name__)
@@ -299,24 +299,26 @@ def _assess_standard_file(
         ],
     )
 
+def analyze_documentation_context(
+    repository_data: dict[str, Any],
+) -> dict[str, Any]:
+    """Analyze documentation using already-fetched repository data.
 
-def analyze_repository_documentation(repository_url: str) -> dict[str, Any]:
-    """Analyze baseline documentation coverage for a public GitHub repository.
+    This is the canonical documentation-analysis function used by the unified
+    application service. It must not retrieve repository data from GitHub.
 
     Args:
-        repository_url: Public HTTPS GitHub URL in the form:
-            https://github.com/owner/repository
+        repository_data: Validated and sanitized repository context returned
+            by RepositoryContextService.
 
     Returns:
         Structured assessment of README, LICENSE, CONTRIBUTING, and SECURITY.
 
     Important:
-        This tool does not perform source-code analysis, vulnerability
-        scanning, scoring, or repository modification.
+        This function does not perform source-code analysis, vulnerability
+        scanning, scoring, repository retrieval, or repository modification.
     """
     try:
-        repository_data = fetch_github_repository(repository_url)
-
         if not repository_data.get("success", False):
             return repository_data
 
@@ -337,9 +339,7 @@ def analyze_repository_documentation(repository_url: str) -> dict[str, Any]:
         license_assessment, license_recommendations = _assess_standard_file(
             artifact="LICENSE",
             path=license_path,
-            present_summary=(
-                "A root-level license file was detected."
-            ),
+            present_summary="A root-level license file was detected.",
             missing_summary=(
                 "No standard root-level license file was detected."
             ),
@@ -355,7 +355,11 @@ def analyze_repository_documentation(repository_url: str) -> dict[str, Any]:
 
         contributing_path = _find_root_file(
             path_map,
-            ("contributing.md", "contributing.rst", "contributing.txt"),
+            (
+                "contributing.md",
+                "contributing.rst",
+                "contributing.txt",
+            ),
         )
         contributing_assessment, contributing_recommendations = (
             _assess_standard_file(
@@ -381,7 +385,11 @@ def analyze_repository_documentation(repository_url: str) -> dict[str, Any]:
 
         security_path = _find_root_file(
             path_map,
-            ("security.md", "security.rst", "security.txt"),
+            (
+                "security.md",
+                "security.rst",
+                "security.txt",
+            ),
         )
         security_assessment, security_recommendations = _assess_standard_file(
             artifact="SECURITY",
@@ -444,6 +452,23 @@ def analyze_repository_documentation(repository_url: str) -> dict[str, Any]:
 
         return result.model_dump(mode="json")
 
+    except KeyError as error:
+        LOGGER.exception(
+            "documentation_context_invalid",
+            extra={
+                "missing_field": str(error),
+                "error_type": type(error).__name__,
+            },
+        )
+
+        return {
+            "success": False,
+            "error_code": "invalid_repository_context",
+            "message": (
+                "Documentation analysis received incomplete repository data."
+            ),
+        }
+
     except Exception as error:
         LOGGER.exception(
             "documentation_analysis_failed",
@@ -456,6 +481,45 @@ def analyze_repository_documentation(repository_url: str) -> dict[str, Any]:
             "message": "Documentation analysis could not be completed safely.",
         }
 
+
+def analyze_repository_documentation(
+    repository_url: str,
+) -> dict[str, Any]:
+    """Fetch repository data and analyze its documentation.
+
+    This function remains for backward compatibility. The unified application
+    service should use analyze_documentation_context() with shared repository
+    data instead.
+
+    Args:
+        repository_url: Public HTTPS GitHub URL in the form:
+            https://github.com/owner/repository
+
+    Returns:
+        Structured documentation analysis result.
+    """
+    try:
+        repository_data = fetch_github_repository(repository_url)
+
+        if not repository_data.get("success", False):
+            return repository_data
+
+        return analyze_documentation_context(repository_data)
+
+    except Exception as error:
+        LOGGER.exception(
+            "documentation_repository_fetch_failed",
+            extra={"error_type": type(error).__name__},
+        )
+
+        return {
+            "success": False,
+            "error_code": "documentation_repository_fetch_failed",
+            "message": (
+                "Repository data could not be retrieved for documentation "
+                "analysis."
+            ),
+        }
 
 settings = get_settings()
 
