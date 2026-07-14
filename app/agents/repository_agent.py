@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field
 from app.config.settings import get_settings
 from app.prompts.repository_prompt import REPOSITORY_AGENT_INSTRUCTION
 from app.tools.github_tool import fetch_github_repository
+from app.tools.github_tool import RepositoryData, fetch_github_repository
 
 
 LOGGER = logging.getLogger(__name__)
@@ -450,93 +451,70 @@ def _build_structure_findings(
 
     return findings
 
+def analyze_repository_context(
+    repository_data: RepositoryData,
+) -> dict[str, Any]:
+    """Analyze already-fetched repository data.
+
+    This is the canonical repository structure-analysis function used by the
+    unified application service. It must not call GitHub.
+    """
+    repository_payload = repository_data.model_dump(mode="json")
+
+    metadata = repository_payload["metadata"]
+    readme = repository_payload["readme"]
+    file_tree = repository_payload["file_tree"]
+
+    paths = _normalized_paths(file_tree)
+    readme_content = readme.get("content")
+
+    project_type, project_type_evidence = _detect_project_type(
+        paths=paths,
+        readme_content=readme_content,
+    )
+
+    detected_technologies = _detect_technologies(
+        primary_language=metadata.get("language"),
+        paths=paths,
+        readme_content=readme_content,
+    )
+
+    structure_findings = _build_structure_findings(
+        paths=paths,
+        project_type=project_type,
+        project_type_evidence=project_type_evidence,
+    )
+
+    missing_artifacts = _find_missing_artifacts(
+        paths=paths,
+        project_type=project_type,
+    )
+
+    result = RepositoryAnalysisResult(
+        repository_url=str(repository_data.repository.url),
+        repository_name=repository_data.repository.repository,
+        owner=repository_data.repository.owner,
+        project_type=project_type,
+        primary_language=repository_data.metadata.language,
+        detected_technologies=detected_technologies,
+        structure_findings=structure_findings,
+        missing_artifacts=missing_artifacts,
+        file_count_inspected=len(repository_data.file_tree),
+        limitations=list(repository_data.limitations),
+    )
+
+    return result.model_dump(mode="json")
+
 
 def analyze_public_repository(repository_url: str) -> dict[str, Any]:
-    """Fetch and structurally analyze a public GitHub repository.
+    """Backward-compatible URL-based wrapper."""
+    repository_payload = fetch_github_repository(repository_url)
 
-    Args:
-        repository_url: Public HTTPS GitHub URL in the form:
-            https://github.com/owner/repository
+    if not repository_payload.get("success", False):
+        return repository_payload
 
-    Returns:
-        A validated structured repository analysis with project type, language,
-        framework signals, structure findings, missing artifacts, and limits.
-
-    Important:
-        This tool does not perform security analysis, documentation
-        review, scoring, or repository modification.
-    """
-    try:
-        repository_data = fetch_github_repository(repository_url)
-
-        if not repository_data.get("success", False):
-            return repository_data
-
-        metadata = repository_data["metadata"]
-        repository = repository_data["repository"]
-        readme = repository_data["readme"]
-        file_tree = repository_data.get("file_tree", [])
-        limitations = list(repository_data.get("limitations", []))
-
-        paths = _normalized_paths(file_tree)
-        readme_content = readme.get("content")
-
-        project_type, project_type_evidence = _detect_project_type(
-            paths=paths,
-            readme_content=readme_content,
-        )
-
-        technologies = _detect_technologies(
-            primary_language=metadata.get("language"),
-            paths=paths,
-            readme_content=readme_content,
-        )
-
-        result = RepositoryAnalysisResult(
-            repository_url=str(repository["url"]),
-            repository_name=str(metadata["name"]),
-            owner=str(metadata["owner"]),
-            project_type=project_type,
-            primary_language=metadata.get("language"),
-            detected_technologies=technologies,
-            structure_findings=_build_structure_findings(
-                paths=paths,
-                project_type=project_type,
-                project_type_evidence=project_type_evidence,
-            ),
-            missing_artifacts=_find_missing_artifacts(
-                paths=paths,
-                project_type=project_type,
-            ),
-            file_count_inspected=len(file_tree),
-            limitations=[
-                *limitations,
-                "Analysis is based on repository metadata, README content, and the retrieved file tree only.",
-                "This phase does not inspect source-code contents beyond README text.",
-            ],
-        )
-
-        LOGGER.info(
-            "repository_analysis_completed",
-            extra={
-                "repository": result.repository_name,
-                "owner": result.owner,
-                "project_type": result.project_type.value,
-                "file_count_inspected": result.file_count_inspected,
-            },
-        )
-
-        return result.model_dump(mode="json")
-    except Exception as error:
-        LOGGER.exception(
-            "repository_analysis_failed",
-            extra={"error_type": type(error).__name__},
-        )
-        return {
-            "success": False,
-            "error_code": "repository_analysis_failed",
-            "message": "Repository analysis could not be completed safely.",
-        }
+    repository_data = RepositoryData.model_validate(repository_payload)
+    return analyze_repository_context(repository_data)
 
 
 settings = get_settings()
