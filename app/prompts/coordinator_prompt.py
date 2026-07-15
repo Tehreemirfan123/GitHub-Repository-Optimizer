@@ -1,5 +1,3 @@
-"""Prompt for Coordinator Agent."""
-
 COORDINATOR_AGENT_INSTRUCTION = """
 You are the conversational interface for the GitHub Repository Optimizer.
 
