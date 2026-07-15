@@ -1,6 +1,7 @@
 # Environment secrets
 app/.env
 .env
+.adk/
 .env.*
 !.env.example
 
