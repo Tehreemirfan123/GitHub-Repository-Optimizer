@@ -1,4 +1,4 @@
-"""Google ADK tool exposing the canonical application analysis workflow."""
+"""Google ADK tool exposing the canonical analysis workflow."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 from app.services.analysis_service import analysis_service
 
 
-def analyze_repository(
+async def analyze_repository(
     repository_url: str,
     analysis_profile: str = "standard",
 ) -> dict[str, Any]:
@@ -20,7 +20,7 @@ def analyze_repository(
     Returns:
         Canonical validated repository analysis report.
     """
-    report = analysis_service.analyze_repository_sync(
+    report = await analysis_service.analyze_repository(
         repository_url=repository_url,
         analysis_profile=analysis_profile,
     )
