@@ -8,29 +8,35 @@ The system separates repository retrieval, repository structure analysis, docume
 
 ## System Architecture
 
+### Flow Chart
+
 ```mermaid
-flowchart TD
-    User[User] --> UI[Streamlit UI or ADK CLI]
-    UI --> Coordinator[Coordinator Agent]
 
-    Coordinator --> RepositoryAgent[Repository Analysis Agent]
-    Coordinator --> DocumentationAgent[Documentation Analysis Agent]
-
-    RepositoryAgent --> GitHubTool[GitHub Repository Tool]
-    DocumentationAgent --> GitHubTool
-
-    GitHubTool --> Guardrails[Guardrails]
-    Guardrails --> GitHubAPI[GitHub REST API]
-
-    GitHubAPI --> GitHubTool
-    GitHubTool --> RepositoryAgent
-    GitHubTool --> DocumentationAgent
-
-    RepositoryAgent --> Coordinator
-    DocumentationAgent --> Coordinator
-
-    Coordinator --> Report[Combined Repository Optimization Report]
-    Report --> User
+User
+  │
+  ├── Streamlit UI
+  ├── ADK Coordinator
+  └── CLI
+         │
+         ▼
+    Analysis Service
+         │
+         ├── Repository Context Service
+         │        │
+         │        ▼
+         │   GitHub Repository Client
+         │        │
+         │        ▼
+         │   GitHub REST API
+         │
+         ├── Repository Structure Analyzer
+         ├── Documentation Analyzer
+         └── Report Service
+                  │
+                  ├── Recommendation normalization
+                  ├── Deduplication
+                  ├── Preliminary scoring
+                  └── Canonical report
 ```
 
 ## Components
@@ -123,6 +129,21 @@ They include:
 7. Coordinator Agent merges specialist outputs.
 8. Streamlit UI or ADK CLI presents the result.
 ```
+## Canonical Analysis Pipeline
+
+All interfaces use `AnalysisService` as the single application workflow.
+
+The service:
+
+1. Retrieves repository context once.
+2. Passes the same validated context to every enabled analyzer.
+3. Collects structured component results.
+4. Normalizes and deduplicates recommendations.
+5. Builds a preliminary deterministic score.
+6. Returns one `RepositoryAnalysisReport`.
+
+Presentation layers must not retrieve GitHub data, execute specialist
+analysis independently, merge recommendations, or calculate scores.
 
 ## Security Boundaries
 

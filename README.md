@@ -82,8 +82,19 @@ github-repository-optimizer-agent/
 │   │   └── repository_prompt.py
 │   ├── tools/
 │   │   └── github_tool.py
+│   ├── services/
+│   │   ├── analysis_service.py
+│   │   ├── report_service.py
+│   │   └── repository_context_service.py
 │   ├── agent.py
 │   └── main.py
+├── scripts/
+│   ├── analyze_repository.py
+├── tests/
+│   ├── test_analysis_service
+│   ├── test_report_service.py
+│   ├── test_repository_context_service
+│   └──test_unified_analysis_tool
 ├── docs/
 │   ├── ARCHITECTURE.md
 │   ├── GETTING_STARTED.md
@@ -165,6 +176,18 @@ Analyze https://github.com/google/adk-python
 * CONTRIBUTING guide availability
 * SECURITY policy availability
 * Documentation recommendations
+
+## Unified Analysis Core
+
+Streamlit, Google ADK, and the command-line interface use the same
+`AnalysisService`.
+
+```python
+result = await analysis_service.analyze_repository(
+    repository_url="https://github.com/owner/repository",
+    analysis_profile="standard",
+)
+```
 
 ## Guardrails
 
