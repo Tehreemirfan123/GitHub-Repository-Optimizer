@@ -21,15 +21,13 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 from typing import Any
-
 import streamlit as st
 
-from app.agents.documentation_agent import analyze_repository_documentation
-from app.agents.repository_agent import analyze_public_repository
-from app.guardrails.input_policy import (
-    InputPolicyError,
-    validate_public_github_repository_url,
+from app.schemas.analysis import (
+    AnalysisStatus,
+    RepositoryAnalysisReport,
 )
+from app.services.analysis_service import analysis_service
 
 
 st.set_page_config(
@@ -40,10 +38,9 @@ st.set_page_config(
 
 
 def _initialize_session_state() -> None:
-    """Initialize stable Streamlit session-state fields."""
-    defaults: dict[str, Any] = {
-        "repository_result": None,
-        "documentation_result": None,
+    """Initialize Streamlit session-state values."""
+    defaults = {
+        "analysis_report": None,
         "last_repository_url": None,
     }
 
@@ -71,100 +68,63 @@ def _display_error_result(result: dict[str, Any], title: str) -> None:
     st.error(f"{title}: {message}")
     st.caption(f"Error code: `{error_code}`")
 
+def _display_repository_summary(
+    report: RepositoryAnalysisReport,
+) -> None:
+    """Display repository metadata from the canonical report."""
+    if report.repository is None:
+        return
 
-def _build_priority_recommendations(
-    repository_result: dict[str, Any],
-    documentation_result: dict[str, Any],
-) -> list[dict[str, str]]:
-    """Combine and de-duplicate recommendations from both analyses."""
-    recommendations: list[dict[str, str]] = []
-    seen_recommendations: set[str] = set()
-
-    priority_order = {
-        "high": 0,
-        "medium": 1,
-        "low": 2,
-    }
-
-    for missing_artifact in _safe_list(
-        repository_result.get("missing_artifacts")
-    ):
-        artifact = str(missing_artifact.get("artifact", "Repository artifact"))
-        recommendation = str(missing_artifact.get("reason", "")).strip()
-        priority = str(missing_artifact.get("priority", "medium")).lower()
-
-        if not recommendation:
-            continue
-
-        key = f"{artifact}:{recommendation}".lower()
-
-        if key not in seen_recommendations:
-            recommendations.append(
-                {
-                    "priority": priority,
-                    "artifact": artifact,
-                    "recommendation": recommendation,
-                    "rationale": (
-                        "Identified from repository structure analysis."
-                    ),
-                }
-            )
-            seen_recommendations.add(key)
-
-    for recommendation_item in _safe_list(
-        documentation_result.get("recommendations")
-    ):
-        artifact = str(recommendation_item.get("artifact", "Documentation"))
-        recommendation = str(
-            recommendation_item.get("recommendation", "")
-        ).strip()
-        priority = str(
-            recommendation_item.get("priority", "medium")
-        ).lower()
-        rationale = str(recommendation_item.get("rationale", "")).strip()
-
-        if not recommendation:
-            continue
-
-        key = f"{artifact}:{recommendation}".lower()
-
-        if key not in seen_recommendations:
-            recommendations.append(
-                {
-                    "priority": priority,
-                    "artifact": artifact,
-                    "recommendation": recommendation,
-                    "rationale": rationale,
-                }
-            )
-            seen_recommendations.add(key)
-
-    return sorted(
-        recommendations,
-        key=lambda item: priority_order.get(item["priority"], 99),
-    )
-
-
-def _display_repository_summary(result: dict[str, Any]) -> None:
-    """Display the high-level repository summary."""
     st.subheader("Repository Summary")
 
-    repository_name = result.get("repository_name", "Unknown")
-    owner = result.get("owner", "Unknown")
-    project_type = str(result.get("project_type", "unknown")).replace("_", " ")
-    primary_language = result.get("primary_language") or "Not detected"
-    repository_url = result.get("repository_url", "")
+    repository = report.repository
 
     column_one, column_two, column_three, column_four = st.columns(4)
 
-    column_one.metric("Repository", repository_name)
-    column_two.metric("Owner", owner)
-    column_three.metric("Project Type", project_type.title())
-    column_four.metric("Primary Language", primary_language)
+    column_one.metric("Repository", repository.name)
+    column_two.metric("Owner", repository.owner)
+    column_three.metric(
+        "Primary Language",
+        repository.primary_language or "Not detected",
+    )
 
-    if isinstance(repository_url, str) and repository_url:
-        st.link_button("Open Repository on GitHub", repository_url)
+    if report.score is not None:
+        column_four.metric(
+            "Preliminary Score",
+            f"{report.score.overall_score}/100",
+        )
+    else:
+        column_four.metric("Preliminary Score", "Unavailable")
 
+    st.link_button("Open Repository on GitHub", repository.url)
+
+def _display_score(report: RepositoryAnalysisReport) -> None:
+    """Display the preliminary Phase 1 score."""
+    if report.score is None:
+        return
+
+    st.subheader("Repository Health Score")
+
+    st.metric(
+        "Overall Score",
+        f"{report.score.overall_score}/100",
+    )
+
+    columns = st.columns(max(1, len(report.score.categories)))
+
+    for column, category in zip(
+        columns,
+        report.score.categories,
+        strict=False,
+    ):
+        with column:
+            st.metric(
+                category.category.replace("_", " ").title(),
+                f"{category.score}/100",
+            )
+            st.caption(category.scoring_note)
+
+    st.caption(report.score.disclaimer)
 
 def _display_repository_analysis(result: dict[str, Any]) -> None:
     """Display repository structure and technology findings."""
@@ -275,98 +235,130 @@ def _display_documentation_analysis(result: dict[str, Any]) -> None:
                 if isinstance(evidence, str):
                     st.caption(f"Evidence: {evidence}")
 
-
 def _display_recommendations(
-    repository_result: dict[str, Any],
-    documentation_result: dict[str, Any],
+    report: RepositoryAnalysisReport,
 ) -> None:
-    """Display merged repository and documentation recommendations."""
+    """Display recommendations already normalized by ReportService."""
     st.subheader("Recommendations")
 
-    recommendations = _build_priority_recommendations(
-        repository_result=repository_result,
-        documentation_result=documentation_result,
-    )
-
-    if not recommendations:
-        st.success("No recommendations were generated by the current checks.")
+    if not report.recommendations:
+        st.success(
+            "No recommendations were generated by the current checks."
+        )
         return
 
-    for item in recommendations:
-        priority = item["priority"].upper()
-        artifact = item["artifact"]
-        recommendation = item["recommendation"]
-        rationale = item["rationale"]
-
-        if item["priority"] == "high":
-            container = st.error
-        elif item["priority"] == "medium":
-            container = st.warning
-        else:
-            container = st.info
-
-        container(
-            f"**{priority} · {artifact}**\n\n"
-            f"{recommendation}\n\n"
-            f"*Why:* {rationale}"
+    for item in report.recommendations:
+        content = (
+            f"**{item.priority.value.upper()} · {item.artifact}**\n\n"
+            f"{item.recommendation}\n\n"
+            f"*Why:* {item.rationale}"
         )
 
+        if item.priority.value == "high":
+            st.error(content)
+        elif item.priority.value == "medium":
+            st.warning(content)
+        else:
+            st.info(content)
 
 def _display_limitations(
-    repository_result: dict[str, Any],
-    documentation_result: dict[str, Any],
+    report: RepositoryAnalysisReport,
 ) -> None:
-    """Display deduplicated limitations from both analysis functions."""
-    limitations: list[str] = []
-
-    for result in (repository_result, documentation_result):
-        for limitation in result.get("limitations", []):
-            if isinstance(limitation, str) and limitation not in limitations:
-                limitations.append(limitation)
-
-    if not limitations:
+    """Display report-level limitations."""
+    if not report.limitations:
         return
 
     with st.expander("Analysis Limitations"):
-        for limitation in limitations:
+        for limitation in report.limitations:
             st.markdown(f"- {limitation}")
+
+def _display_analysis_metadata(
+    report: RepositoryAnalysisReport,
+) -> None:
+    """Display reproducibility and coverage information."""
+    if report.limits is None:
+        return
+
+    with st.expander("Analysis Details"):
+        st.write(f"Analysis ID: `{report.analysis_id}`")
+        st.write(f"Created: `{report.created_at.isoformat()}`")
+        st.write(f"Profile: `{report.analysis_profile.value}`")
+        st.write(
+            f"Repository files retrieved: "
+            f"`{report.limits.file_count_retrieved}`"
+        )
+        st.write(
+            f"File tree truncated: "
+            f"`{report.limits.file_tree_truncated}`"
+        )
+        st.write(
+            f"README available: "
+            f"`{report.limits.readme_available}`"
+        )
+        st.write(
+            f"README truncated: "
+            f"`{report.limits.readme_truncated}`"
+        )
 
 
 def _run_analysis(repository_url: str) -> None:
-    """Run both existing specialist analysis functions safely."""
-    try:
-        validated_reference = validate_public_github_repository_url(
-            repository_url
-        )
-    except InputPolicyError as error:
-        st.error(str(error))
+    """Run repository analysis through the canonical application service."""
+    normalized_input = repository_url.strip()
+
+    if not normalized_input:
+        st.error("Enter a public GitHub repository URL.")
         return
 
-    normalized_url = validated_reference.normalized_url
-
-    progress = st.progress(0, text="Validating repository URL...")
+    progress = st.progress(
+        0,
+        text="Preparing repository analysis...",
+    )
 
     try:
-        progress.progress(25, text="Running repository structure analysis...")
-        repository_result = analyze_public_repository(normalized_url)
+        progress.progress(
+            20,
+            text="Retrieving repository context...",
+        )
 
-        progress.progress(65, text="Running documentation analysis...")
-        documentation_result = analyze_repository_documentation(normalized_url)
+        report = analysis_service.analyze_repository_sync(
+            repository_url=normalized_input,
+            analysis_profile="standard",
+        )
 
-        progress.progress(100, text="Analysis completed.")
+        progress.progress(
+            80,
+            text="Building optimization report...",
+        )
 
-        st.session_state.repository_result = repository_result
-        st.session_state.documentation_result = documentation_result
-        st.session_state.last_repository_url = normalized_url
+        st.session_state.analysis_report = report
+        st.session_state.last_repository_url = normalized_input
+
+        progress.progress(
+            100,
+            text="Analysis completed.",
+        )
 
     except Exception:
         st.error(
-            "The application could not complete the analysis safely. "
-            "Check your connection, GitHub token, and terminal logs."
+            "The application could not complete the analysis safely."
         )
+
     finally:
         progress.empty()
 
+def _get_component_result(
+    report: RepositoryAnalysisReport,
+    component_name: str,
+) -> dict[str, Any] | None:
+    """Return the result of a completed report component."""
+    for component in report.components:
+        if (
+            component.component_name == component_name
+            and component.result is not None
+        ):
+            return component.result
+
+    return None
 
 def main() -> None:
     """Render the Streamlit application."""
@@ -392,61 +384,112 @@ def main() -> None:
     if submitted:
         _run_analysis(repository_url)
 
-    repository_result = st.session_state.repository_result
-    documentation_result = st.session_state.documentation_result
+    # if not isinstance(repository_result, dict):
+    #     st.info(
+    #         "Enter a public GitHub repository URL and click "
+    #         "**Analyze Repository**."
+    #     )
+    #     return
 
-    if not isinstance(repository_result, dict):
+    # if not repository_result.get("success", False):
+    #     _display_error_result(
+    #         repository_result,
+    #         "Repository analysis failed",
+    #     )
+    #     return
+
+    # if not isinstance(documentation_result, dict):
+    #     st.warning(
+    #         "Repository analysis completed, but documentation analysis "
+    #         "did not return a result."
+    #     )
+    #     _display_repository_summary(repository_result)
+    #     _display_repository_analysis(repository_result)
+    #     return
+
+    # if not documentation_result.get("success", False):
+    #     _display_error_result(
+    #         documentation_result,
+    #         "Documentation analysis failed",
+    #     )
+    #     _display_repository_summary(repository_result)
+    #     _display_repository_analysis(repository_result)
+    #     return
+
+    # _display_repository_summary(repository_result)
+    # st.divider()
+
+    # _display_repository_analysis(repository_result)
+    # st.divider()
+
+    # _display_documentation_analysis(documentation_result)
+    # st.divider()
+
+    # _display_recommendations(
+    #     repository_result=repository_result,
+    #     documentation_result=documentation_result,
+    # )
+    # st.divider()
+
+    # _display_limitations(
+    #     repository_result=repository_result,
+    #     documentation_result=documentation_result,
+    # )
+
+    report = st.session_state.get("analysis_report")
+
+    if not isinstance(report, RepositoryAnalysisReport):
         st.info(
             "Enter a public GitHub repository URL and click "
             "**Analyze Repository**."
         )
         return
 
-    if not repository_result.get("success", False):
-        _display_error_result(
-            repository_result,
-            "Repository analysis failed",
-        )
+    if report.status == AnalysisStatus.FAILED:
+        if report.errors:
+            for error in report.errors:
+                st.error(error.message)
+                st.caption(f"Error code: `{error.error_code}`")
+        else:
+            st.error("The repository analysis failed.")
+
         return
 
-    if not isinstance(documentation_result, dict):
+    if report.status == AnalysisStatus.PARTIALLY_COMPLETED:
         st.warning(
-            "Repository analysis completed, but documentation analysis "
-            "did not return a result."
+            "The analysis completed with one or more unavailable sections."
         )
-        _display_repository_summary(repository_result)
-        _display_repository_analysis(repository_result)
-        return
 
-    if not documentation_result.get("success", False):
-        _display_error_result(
-            documentation_result,
-            "Documentation analysis failed",
-        )
-        _display_repository_summary(repository_result)
-        _display_repository_analysis(repository_result)
-        return
-
-    _display_repository_summary(repository_result)
-    st.divider()
-
-    _display_repository_analysis(repository_result)
-    st.divider()
-
-    _display_documentation_analysis(documentation_result)
-    st.divider()
-
-    _display_recommendations(
-        repository_result=repository_result,
-        documentation_result=documentation_result,
-    )
-    st.divider()
-
-    _display_limitations(
-        repository_result=repository_result,
-        documentation_result=documentation_result,
+    repository_result = _get_component_result(
+        report,
+        "repository_structure",
     )
 
+    documentation_result = _get_component_result(
+        report,
+        "documentation",
+    )
+
+    _display_repository_summary(report)
+
+    st.divider()
+    _display_score(report)
+
+    if repository_result is not None:
+        st.divider()
+        _display_repository_analysis(repository_result)
+
+    if documentation_result is not None:
+        st.divider()
+        _display_documentation_analysis(documentation_result)
+
+    st.divider()
+    _display_recommendations(report)
+
+    st.divider()
+    _display_limitations(report)
+
+    _display_analysis_metadata(report)
 
 if __name__ == "__main__":
     main()
